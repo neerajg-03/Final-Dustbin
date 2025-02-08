@@ -10,39 +10,44 @@ from PIL import Image
 from fpdf import FPDF
 from twilio.rest import Client
 import googlemaps
-
 import os
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
+# Securely retrieve API keys from .env file
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 GMAPS_API_KEY = os.getenv("GMAPS_API_KEY")
 
+# Initialize Twilio & Google Maps clients (Ensure API keys are stored securely)
+if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+else:
+    st.warning("Twilio credentials missing. SMS notifications won't work.")
 
-# Twilio API Credentials
-client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
-# Google Maps API Key
-gmaps = googlemaps.Client(key=GMAPS_API_KEY)
+if GMAPS_API_KEY:
+    gmaps = googlemaps.Client(key=GMAPS_API_KEY)
+else:
+    st.warning("Google Maps API Key missing. Route optimization won't work.")
 
 # Load UI assets
-logo = Image.open("dustbin_logo.jpg")
-header_img = Image.open("header.jpg")
+logo = Image.open("assets/dustbin_logo.jpg")  # Ensure 'assets' folder exists
+header_img = Image.open("assets/header.jpg")
 
-# Streamlit UI Config
-st.title("IoT SmartBin DashBoard")
-
+# Streamlit UI Configuration
+st.title("IoT SmartBin Dashboard")
 st.image(header_img, use_container_width=True)
 st.sidebar.image(logo, width=200)
 st.sidebar.title("MCD Admin Panel")
 
+# Role selection
 user_role = st.sidebar.radio("Select Role", ["Admin", "Field Worker"])
 
 
-# Generate real-time bin data
+# Function to generate mock bin data
 def generate_bin_data():
     bins = []
     for i in range(10):
@@ -72,12 +77,12 @@ def calculate_priority(df):
     return df
 
 
-# Fetch and process live bin data
+# Generate and process bin data
 bin_data = generate_bin_data()
 bin_data = calculate_priority(bin_data)
 
 
-# Generate real-time van locations
+# Generate mock van data
 def generate_van_data():
     return pd.DataFrame({
         "Van ID": [f"Van-{i + 1}" for i in range(4)],
@@ -90,26 +95,19 @@ vans = generate_van_data()
 
 
 # Assign bins dynamically to closest available vans
-# Assign bins dynamically to closest available vans & send Twilio alerts
 def assign_bins_to_vans(bin_data, vans):
     assignments = []
-
     for _, bin in bin_data.iterrows():
         min_distance = float('inf')
         assigned_van = None
-        assigned_driver_number = None  # Store driver number for Twilio
 
         for _, van in vans.iterrows():
             distance = np.sqrt((bin["Latitude"] - van["Latitude"]) ** 2 + (bin["Longitude"] - van["Longitude"]) ** 2)
             if distance < min_distance:
                 min_distance = distance
                 assigned_van = van["Van ID"]
-                assigned_driver_number = "+919810126223" # Replace with actual driver's number
 
         assignments.append(assigned_van)
-
-        # 🚨 *Send SMS Notification via Twilio*
-
 
     bin_data["Assigned Van"] = assignments
     return bin_data
@@ -117,15 +115,17 @@ def assign_bins_to_vans(bin_data, vans):
 
 bin_data = assign_bins_to_vans(bin_data, vans)
 
-# Display bin data in a table
-st.subheader("\U0001F4CD Live Bin Status")
+# Display bin data
+st.subheader("📍 Live Bin Status")
 st.dataframe(
-    bin_data.style.format({"Fill Level (%)": "{:.2f}", "Temperature (°C)": "{:.2f}", "Humidity (%)": "{:.2f}"}))
+    bin_data.style.format({"Fill Level (%)": "{:.2f}", "Temperature (°C)": "{:.2f}", "Humidity (%)": "{:.2f}"})
+)
 
-# Display bin locations on a map
-st.subheader("\U0001F5FA Bin Locations & Routes")
+# Display bins on a map
+st.subheader("🗺️ Bin Locations & Routes")
 map = folium.Map(location=[28.7, 77.2], zoom_start=12)
-# Add dustbin markers
+
+# Add markers for bins
 for _, bin in bin_data.iterrows():
     folium.Marker(
         location=[bin["Latitude"], bin["Longitude"]],
@@ -134,11 +134,13 @@ for _, bin in bin_data.iterrows():
     ).add_to(map)
 
 
-
 # Assign optimized routes using Google Maps API
-# Assign optimized routes using Google Maps API with unique colors
 def get_routes(bin_data, vans, map_obj):
-    colors = ["blue", "red", "green", "purple", "orange", "darkblue", "darkred", "darkgreen"]  # Expand if needed
+    if not GMAPS_API_KEY:
+        st.error("Google Maps API Key missing. Cannot generate optimized routes.")
+        return map_obj
+
+    colors = ["blue", "red", "green", "purple"]
 
     for i, van in vans.iterrows():
         assigned_bins = bin_data[bin_data["Assigned Van"] == van["Van ID"]]
@@ -157,11 +159,9 @@ def get_routes(bin_data, vans, map_obj):
                 route_coords = [(step['start_location']['lat'], step['start_location']['lng']) for leg in
                                 directions[0]['legs'] for step in leg['steps']]
 
-                # Assign a unique color to each van
                 path_color = colors[i % len(colors)]
                 folium.PolyLine(route_coords, color=path_color, weight=5, opacity=0.8).add_to(map_obj)
 
-                # Van Marker
                 folium.Marker(
                     [van["Latitude"], van["Longitude"]],
                     popup=f"Van: {van['Van ID']}",
@@ -179,31 +179,25 @@ folium_static(map)
 
 # Function to send real-time updates via Twilio
 def send_update_message(worker_phone, message):
-    client.messages.create(
-        body=message,
-        from_=TWILIO_PHONE_NUMBER,
-        to=worker_phone
-    )
+    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+        client.messages.create(
+            body=message,
+            from_=TWILIO_PHONE_NUMBER,
+            to=worker_phone
+        )
+    else:
+        st.error("Twilio credentials missing. Cannot send SMS.")
 
 
-# Admin Panel for Managing Field Workers
+# Admin Panel for Worker Management
 if user_role == "Admin":
-    st.sidebar.subheader("\U0001F477 Field Workers Management")
+    st.sidebar.subheader("👷 Field Workers Management")
     workers = pd.DataFrame({
         "Worker ID": [101, 102, 103, 104],
         "Name": ["Rajesh", "Amit", "Pooja", "Suresh"],
         "Assigned Zone": ["North", "South", "East", "West"],
-        "Phone": ["+918368164831", "+918368164831", "+917654321098", "+916543210987"]
+        "Phone": ["+91XXXXXXXXXX"] * 4  # Masked phone numbers
     })
     st.sidebar.dataframe(workers)
 
-    selected_worker = st.sidebar.selectbox("Assign Bin", bin_data["Bin ID"])
-    selected_worker_id = st.sidebar.selectbox("Select Worker", workers["Worker ID"])
-    worker_phone = workers.loc[workers["Worker ID"] == selected_worker_id, "Phone"].values[0]
-
-    if st.sidebar.button("Assign Task"):
-        task_message = f"Bin {selected_worker} has been assigned to you. Please collect the waste promptly."
-        send_update_message(worker_phone, task_message)
-        st.sidebar.success(f"Bin {selected_worker} assigned to Worker {selected_worker_id} with real-time update!")
-
-st.success("✅ Dashboard Updated Successfully!")
+    st.success("✅ Dashboard Updated Successfully!")
