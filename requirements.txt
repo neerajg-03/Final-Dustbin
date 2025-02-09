@@ -1,3 +1,10 @@
+streamlit
+streamlit-folium
+plotly
+python-dotenv
 folium
-streamlit-folium  
-python-dotenv  
+Pillow
+fpdf
+twilio
+googlemaps
+
