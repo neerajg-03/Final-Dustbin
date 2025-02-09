@@ -1,1 +1,3 @@
 folium
+streamlit-folium  
+python-dotenv  
